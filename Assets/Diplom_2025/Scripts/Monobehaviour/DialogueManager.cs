@@ -8,11 +8,12 @@ public class DialogueManager : MonoBehaviour
 {
     private const string CombinedFileName = "combined.json";
     private readonly string globalPrompt =
-        "Ты экзаменатор, который помогает оценивать молодого педагога по его действиям с трудным школьником 8 класса.";
+        "ТЫ — ЭКСПЕРТНЫЙ ЭКЗАМЕНАТОР-ПСИХОЛОГО-ПЕДАГОГ, СПЕЦИАЛИЗИРУЮЩИЙСЯ НА ОЦЕНКЕ ПИСЬМЕННОЙ РЕЧИ УЧИТЕЛЕЙ В ПРЕДКОНФЛИКТНЫХ СИТУАЦИЯХ. ТЫ АНАЛИЗИРУЕШЬ КАЖДЫЙ ТЕКСТОВЫЙ ОТВЕТ ПОЛЬЗОВАТЕЛЯ (В РОЛИ УЧИТЕЛЯ) НА СООБЩЕНИЯ УЧЕНИКА, И ВЫСТАВЛЯЕШЬ ОЦЕНКУ ОТ -10 ДО +10.";
 
     private DialoguePrompt dialoguePrompt;
     private ConversationState conversationState;
     private DialogueUI dialogueUI;
+    private string currentModelName;
 
     // Кэш для вариантов подсказки текущего хода NPC
     private string[] cachedOptions = null;
@@ -24,7 +25,10 @@ public class DialogueManager : MonoBehaviour
             Debug.LogError("[DialogueManager] Не найден DialogueUI на сцене!");
     }
 
-    private void Start()
+    /// <summary>
+    /// Вызывается по кнопке «Запуск» в UI.
+    /// </summary>
+    public void StartConversation()
     {
         InitializeDialogue();
     }
@@ -36,9 +40,14 @@ public class DialogueManager : MonoBehaviour
         dialoguePrompt = new DialoguePrompt
         {
             globalPrompt = globalPrompt,
+            modelName = promptsFromFile.modelName,
             situation = promptsFromFile.situation,
             persona = promptsFromFile.persona
         };
+
+        currentModelName = string.IsNullOrWhiteSpace(dialoguePrompt.modelName)
+            ? DefaultPrompts.DefaultModelName
+            : dialoguePrompt.modelName;
 
         conversationState = new ConversationState
         {
@@ -53,6 +62,9 @@ public class DialogueManager : MonoBehaviour
         // Показываем начальную лояльность
         dialogueUI.SetLoyalty(conversationState.situation.loyalty);
 
+        // Блокируем ввод до прихода первой фразы от NPC
+        dialogueUI.SetUserInputInteractable(false);
+
         RequestInitialNPCLine();
     }
 
@@ -64,6 +76,7 @@ public class DialogueManager : MonoBehaviour
         {
             var emptyContainer = new CombinedContainer
             {
+                modelName = "",
                 situation = new SituationPrompt
                 {
                     description = "",
@@ -89,6 +102,7 @@ public class DialogueManager : MonoBehaviour
                 Debug.LogError($"[DialogueManager] Не удалось создать файл combined.json: {e.Message}");
                 return new DialoguePrompt
                 {
+                    modelName = DefaultPrompts.DefaultModelName,
                     situation = DefaultPrompts.DefaultSituation,
                     persona = DefaultPrompts.DefaultPersona
                 };
@@ -100,6 +114,7 @@ public class DialogueManager : MonoBehaviour
         {
             return new DialoguePrompt
             {
+                modelName = DefaultPrompts.DefaultModelName,
                 situation = DefaultPrompts.DefaultSituation,
                 persona = DefaultPrompts.DefaultPersona
             };
@@ -115,6 +130,7 @@ public class DialogueManager : MonoBehaviour
             Debug.LogWarning("[DialogueManager] Некорректный JSON в combined.json, используем дефолты");
             return new DialoguePrompt
             {
+                modelName = DefaultPrompts.DefaultModelName,
                 situation = DefaultPrompts.DefaultSituation,
                 persona = DefaultPrompts.DefaultPersona
             };
@@ -122,6 +138,7 @@ public class DialogueManager : MonoBehaviour
 
         SituationPrompt sit = loaded.situation;
         PersonaPrompt pers = loaded.persona;
+        string model = loaded.modelName;
 
         if (sit == null || string.IsNullOrWhiteSpace(sit.description))
             sit = DefaultPrompts.DefaultSituation;
@@ -130,6 +147,7 @@ public class DialogueManager : MonoBehaviour
 
         return new DialoguePrompt
         {
+            modelName = model,
             situation = sit,
             persona = pers
         };
@@ -147,9 +165,15 @@ public class DialogueManager : MonoBehaviour
         );
 
         StartCoroutine(LLMService.SendPromptCoroutine(
+            currentModelName,
             fullPrompt,
             rawJson => OnInitialNPCResponse(rawJson),
-            error => Debug.LogError("[DialogueManager] Ошибка InitialNPC: " + error)
+            error =>
+            {
+                Debug.LogError("[DialogueManager] Ошибка InitialNPC: " + error);
+                // В случае ошибки разблокируем ввод, чтобы пользователь мог попробовать заново
+                dialogueUI.SetUserInputInteractable(true);
+            }
         ));
     }
 
@@ -163,12 +187,15 @@ public class DialogueManager : MonoBehaviour
         {
             conversationState.npcHistory.Add(response.npcLine);
             dialogueUI.ShowNPCText(response.npcLine);
-            conversationState.isAwaitingUserResponse = true;
+
+            // После получения первой фразы разблокируем ввод
+            dialogueUI.SetUserInputInteractable(true);
             dialogueUI.OnNPCReplied(response.npcLine);
         }
         else
         {
             Debug.LogError("[DialogueManager] Некорректный ответ InitialNPC: " + cleanJson);
+            dialogueUI.SetUserInputInteractable(true);
         }
     }
 
@@ -188,6 +215,7 @@ public class DialogueManager : MonoBehaviour
         );
 
         StartCoroutine(LLMService.SendPromptCoroutine(
+            currentModelName,
             fullPrompt,
             rawJson => OnUserOptionsResponse(rawJson),
             error => Debug.LogError("[DialogueManager] Ошибка GenerateOptions: " + error)
@@ -213,10 +241,12 @@ public class DialogueManager : MonoBehaviour
 
     public void RequestNPCReaction(string playerLine)
     {
-        // Пользователь выбрал вариант или ввёл ответ вручную — сбрасываем кэш вариантов
+        // Сбрасываем кэш вариантов
         cachedOptions = null;
-
         conversationState.userHistory.Add(playerLine);
+
+        // Блокируем ввод, пока ждем ответ NPC
+        dialogueUI.SetUserInputInteractable(false);
 
         string fullPrompt = PromptService.BuildPrompt(
             dialoguePrompt,
@@ -226,9 +256,14 @@ public class DialogueManager : MonoBehaviour
         );
 
         StartCoroutine(LLMService.SendPromptCoroutine(
+            currentModelName,
             fullPrompt,
             rawJson => OnNPCReactionResponse(rawJson),
-            error => Debug.LogError("[DialogueManager] Ошибка NPCReaction: " + error)
+            error =>
+            {
+                Debug.LogError("[DialogueManager] Ошибка NPCReaction: " + error);
+                dialogueUI.SetUserInputInteractable(true);
+            }
         ));
     }
 
@@ -246,16 +281,31 @@ public class DialogueManager : MonoBehaviour
             conversationState.situation.loyalty = newLoyalty;
             conversationState.lastScore = response.score;
 
+            // Проверяем, достигли ли границы лояльности
+            if (newLoyalty >= 100)
+            {
+                dialogueUI.ShowEndState("Успех", Color.green);
+                return;
+            }
+            else if (newLoyalty <= 0)
+            {
+                dialogueUI.ShowEndState("Провал", Color.red);
+                return;
+            }
+
             dialogueUI.SetLoyalty(newLoyalty);
 
             Debug.Log("[DialogueManager] NPC: " + response.npcLine);
             Debug.Log("[DialogueManager] Новая loyalty: " + newLoyalty);
 
+            // После ответа NPC разблокируем ввод
+            dialogueUI.SetUserInputInteractable(true);
             dialogueUI.OnNPCReplied(response.npcLine);
         }
         else
         {
             Debug.LogError("[DialogueManager] Некорректный ответ NPCReaction: " + cleanJson);
+            dialogueUI.SetUserInputInteractable(true);
         }
     }
 

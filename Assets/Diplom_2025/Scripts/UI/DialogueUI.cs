@@ -26,8 +26,10 @@ public class DialogueUI : MonoBehaviour
     {
         dialogueManager = FindFirstObjectByType<DialogueManager>();
 
+        // Скрываем панель вариантов вначале
         optionsPanel.SetActive(false);
 
+        // Назначаем колбеки
         needHintButton.onClick.AddListener(OnNeedHintClicked);
         sendButton.onClick.AddListener(OnSendButtonClicked);
 
@@ -50,6 +52,30 @@ public class DialogueUI : MonoBehaviour
         loyaltyText.text = $"Loyalty: {loyalty}";
     }
 
+    /// <summary>
+    /// Управляет интерактивностью поля ввода, кнопок «Отправить» и «Подсказка».
+    /// </summary>
+    public void SetUserInputInteractable(bool value)
+    {
+        playerInputField.interactable = value;
+        sendButton.interactable = value;
+        needHintButton.interactable = value;
+    }
+
+    /// <summary>
+    /// Показывает финальное сообщение (успех/провал) цветом и выключает весь UI.
+    /// </summary>
+    public void ShowEndState(string message, Color color)
+    {
+        // Скрываем всё остальное
+        mainUIGroup.SetActive(false);
+        optionsPanel.SetActive(false);
+
+        // Показываем сообщение надписью вместо NPC-текста
+        npcText.text = message;
+        npcText.color = color;
+    }
+
     private void OnNeedHintClicked()
     {
         // Если панель вариантов уже открыта — просто показываем её
@@ -60,7 +86,7 @@ public class DialogueUI : MonoBehaviour
             return;
         }
 
-        // Иначе скрываем основной UI и запрашиваем варианты
+        // Иначе скрываем основной UI и запрашиваем варианты у DialogueManager
         mainUIGroup.SetActive(false);
         optionsPanel.SetActive(false); // на всякий случай
         dialogueManager.RequestUserOptions();
@@ -72,9 +98,7 @@ public class DialogueUI : MonoBehaviour
         if (!string.IsNullOrEmpty(playerLine))
         {
             playerInputField.text = "";
-            playerInputField.interactable = false;
-            sendButton.interactable = false;
-            needHintButton.interactable = false;
+            SetUserInputInteractable(false);
             optionsPanel.SetActive(false);
 
             dialogueManager.RequestNPCReaction(playerLine);
@@ -85,7 +109,6 @@ public class DialogueUI : MonoBehaviour
     {
         if (options == null || options.Length != 4) return;
 
-        // Просто показываем панель с вариантами, без блокировки input
         optionsPanel.SetActive(true);
         for (int i = 0; i < 4; i++)
         {
@@ -101,10 +124,7 @@ public class DialogueUI : MonoBehaviour
         optionsPanel.SetActive(false);
         mainUIGroup.SetActive(true);
 
-        playerInputField.interactable = false;
-        sendButton.interactable = false;
-        needHintButton.interactable = false;
-
+        SetUserInputInteractable(false);
         dialogueManager.RequestNPCReaction(chosen);
     }
 
@@ -119,14 +139,12 @@ public class DialogueUI : MonoBehaviour
     {
         ShowNPCText(npcLine);
         mainUIGroup.SetActive(true);
-        playerInputField.interactable = true;
-        sendButton.interactable = true;
-        needHintButton.interactable = true;
+        SetUserInputInteractable(true);
     }
 
     public void OnOptionsReady(string[] options)
     {
-        // Убираем блокировку input здесь — пользователь может вводить даже когда видны варианты
+        // При генерации вариантов ввод остаётся доступным; панель появится
         ShowOptions(options);
     }
 }

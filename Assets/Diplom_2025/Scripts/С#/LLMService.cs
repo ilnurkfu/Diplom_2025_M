@@ -8,7 +8,6 @@ using UnityEngine.Networking;
 public class LLMService
 {
     // Замените "имя_вашей_модели" на реально доступное имя из GET /v1/models
-    private const string ModelName = "vikhr-gemma-2b-instruct";
     private const string Url = "http://localhost:1234/v1/chat/completions";
 
     [Serializable]
@@ -43,6 +42,7 @@ public class LLMService
     /// Отправляет promptText в LLM Studio по маршруту /v1/chat/completions.
     /// </summary>
     public static IEnumerator SendPromptCoroutine(
+        string modelName,
         string promptText,
         Action<string> onSuccess,
         Action<string> onError)
@@ -50,12 +50,12 @@ public class LLMService
         // Собираем payload через конкретные классы, чтобы JsonUtility корректно сериализовал
         var payload = new ChatPayload
         {
-            model = ModelName,
+            model = modelName,
             messages = new[]
             {
                 new ChatMessage { role = "system", content = promptText }
             },
-            max_tokens = 512,
+            max_tokens = 2048,
             temperature = 0.7f
         };
 
